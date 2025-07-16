@@ -86,10 +86,7 @@
       const name = playerNameInput.value || "玩家";
       if (ws) ws.close();
 
-      const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const wsUrl = `${wsProtocol}://${window.location.host}/ws?room=${room}&name=${encodeURIComponent(name)}`;
-      const ws = new WebSocket(wsUrl);
-
+      ws = new WebSocket(`ws://34.81.76.169:7000/ws?room=${room}&name=${encodeURIComponent(name)}`);
 
       ws.onopen = () => {
         console.log(`✅ ${name} 已進入房間 [${room}]`);
