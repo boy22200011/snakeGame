@@ -8,7 +8,7 @@
     body { text-align: center; color: white; background: #222; }
     #waitingMsg { color: orange; margin-top: 10px; }
     #roomInfo { color: lightgreen; margin-top: 10px; }
-    #playerList { color: cyan; margin-top: 10px; }
+    #playerList { color: cyan; margin-top: 10px; white-space: pre-line; }
   </style>
 </head>
 <body>
@@ -67,12 +67,13 @@
     let gameInterval = null;
     let keyBound = false;
 
-    function updatePlayerList(players) {
-      if (players && players.length > 0) {
-        playerListDiv.innerText = "目前房間玩家：" + players.join(", ");
-      } else {
-        playerListDiv.innerText = "目前房間沒有人";
-      }
+    // 更新房間玩家列表 + Ready 狀態
+    function updateRoomStatus(playersData) {
+      let html = "目前房間玩家：\n";
+      playersData.forEach(p => {
+        html += (p.ready ? "✅ " : "❌ ") + p.name + "\n";
+      });
+      playerListDiv.innerHTML = html;
     }
 
     function joinRoom() {
@@ -97,12 +98,14 @@
 
         if (data.type === "playerJoin") {
           roomInfoDiv.innerText = `🎉 ${data.name} 加入房間，目前 ${data.count} 人`;
-          updatePlayerList(data.players);
         }
 
         if (data.type === "playerLeave") {
           roomInfoDiv.innerText = `👋 ${data.name} 離開房間，目前 ${data.count} 人`;
-          updatePlayerList(data.players);
+        }
+
+        if (data.type === "roomStatus") {
+          updateRoomStatus(data.players);
         }
 
         if (data.type === "waiting") {
@@ -126,9 +129,8 @@
         }
 
         if (data.type === "state") {
-          // ✅ 儲存對方的名稱和分數
           if (data.id !== myId) {
-            players[data.id] = data; // data 現在包含 name
+            players[data.id] = data;
           } else {
             food = data.food;
           }
@@ -231,12 +233,11 @@
         }));
       }
 
-      // ✅ 送狀態時多帶 name
       const myName = playerNameInput.value || "玩家";
       ws.send(JSON.stringify({
         type: "state",
         id: myId,
-        name: myName,  // <-- 送出玩家名稱
+        name: myName,
         snake: mySnake,
         score: score,
         food: food
@@ -274,12 +275,10 @@
       ctx.font = "16px Arial";
       let yOffset = 20;
 
-      // ✅ 自己名稱顯示正確
       const myName = playerNameInput.value || "玩家";
       ctx.fillText(`你(${myName}) 分數: ${score}`, canvas.width - 200, yOffset);
       yOffset += 20;
 
-      // ✅ 其他玩家顯示名稱而不是 ID
       for (let id in players) {
         const displayName = players[id].name || id;
         ctx.fillText(`${displayName}: ${players[id].score} 分`, canvas.width - 200, yOffset);

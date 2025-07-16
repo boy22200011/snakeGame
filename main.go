@@ -33,8 +33,6 @@ type BroadcastMsg struct {
 	data []byte
 }
 
-var broadcast = make(chan BroadcastMsg)
-
 // 取得房間內所有玩家名稱
 func getRoomPlayerNames(room string) []string {
 	names := []string{}
@@ -42,6 +40,30 @@ func getRoomPlayerNames(room string) []string {
 		names = append(names, p.Name)
 	}
 	return names
+}
+
+// 取得房間玩家狀態（名字 + Ready）
+func getRoomPlayerStates(room string) []map[string]interface{} {
+	states := []map[string]interface{}{}
+	for _, p := range roomStates[room].Players {
+		states = append(states, map[string]interface{}{
+			"name":  p.Name,
+			"ready": p.Ready,
+		})
+	}
+	return states
+}
+
+// 廣播房間目前狀態（所有玩家 + Ready 狀態）
+func broadcastRoomStatus(room string) {
+	roomStatusMsg := map[string]interface{}{
+		"type":    "roomStatus",
+		"players": getRoomPlayerStates(room),
+	}
+	roomStatusJson, _ := json.Marshal(roomStatusMsg)
+	for conn := range roomStates[room].Players {
+		conn.WriteMessage(websocket.TextMessage, roomStatusJson)
+	}
 }
 
 func main() {
@@ -82,7 +104,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("✅ %s 加入房間 [%s]，目前人數：%d\n", name, room, len(roomStates[room].Players))
 
-	// 廣播進房 + 玩家列表
+	// 廣播進房
 	joinMsg := map[string]interface{}{
 		"type":    "playerJoin",
 		"name":    name,
@@ -94,13 +116,16 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		conn.WriteMessage(websocket.TextMessage, joinJson)
 	}
 
+	// 進房後同步一次房間狀態
+	broadcastRoomStatus(room)
+
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			fmt.Printf("❌ %s 離開房間 [%s]\n", name, room)
 			delete(roomStates[room].Players, ws)
 
-			// 廣播離房 + 玩家列表
+			// 廣播離房
 			leaveMsg := map[string]interface{}{
 				"type":    "playerLeave",
 				"name":    name,
@@ -111,6 +136,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			for conn := range roomStates[room].Players {
 				conn.WriteMessage(websocket.TextMessage, leaveJson)
 			}
+
+			// 離房後同步一次房間狀態
+			broadcastRoomStatus(room)
 			break
 		}
 
@@ -122,6 +150,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			mode := data["mode"].(string)
 			roomStates[room].Mode = mode
 			roomStates[room].Players[ws].Ready = true
+
+			// Ready 後同步一次房間狀態
+			broadcastRoomStatus(room)
 
 			// 計算房間狀態
 			playerCount := len(roomStates[room].Players)
@@ -170,6 +201,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				roomStates[room].Players[conn].Ready = false
 			}
 			roomStates[room].InGame = false
+
+			// 遊戲結束後更新一次房間狀態
+			broadcastRoomStatus(room)
 		}
 	}
 }
