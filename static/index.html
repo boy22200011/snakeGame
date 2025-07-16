@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>房間多人貪食蛇</title>
+  <style>
+    canvas { background: #111; display: block; margin: 20px auto; }
+    body { text-align: center; color: white; background: #222; }
+    #waitingMsg { color: orange; margin-top: 10px; }
+    #roomInfo { color: lightgreen; margin-top: 10px; }
+    #playerList { color: cyan; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Go 房間多人貪食蛇</h1>
+
+  <label>名字：</label>
+  <input id="playerName" placeholder="輸入暱稱">
+
+  <label>選擇房間：</label>
+  <select id="roomSelect">
+    <option value="roomA">Room A</option>
+    <option value="roomB">Room B</option>
+  </select>
+
+  <label>模式：</label>
+  <select id="modeSelect">
+    <option value="single">單人模式</option>
+    <option value="multi">多人模式</option>
+  </select>
+
+  <button onclick="joinRoom()">加入房間</button>
+  <button onclick="readyGame()">Ready!</button>
+
+  <div id="roomInfo"></div>
+  <div id="playerList"></div>
+  <div id="countdown"></div>
+  <div id="waitingMsg"></div>
+
+  <canvas id="game" width="400" height="400"></canvas>
+  <p>方向鍵控制，撞到自己或別人會重生，達到 10 分遊戲結束</p>
+
+  <script>
+    const GRID_SIZE = 20;
+    const TICK_RATE = 200;
+    const WIN_SCORE = 10;
+
+    let ws;
+    let myId = Math.random().toString(36).slice(2, 8);
+    let mySnake = [{x:5,y:5}];
+    let myDir = {x:1,y:0};
+    let score = 0;
+    let food = [{x:8,y:8}];
+    let players = {};
+    let inGame = false;
+
+    const roomSelect = document.getElementById("roomSelect");
+    const modeSelect = document.getElementById("modeSelect");
+    const playerNameInput = document.getElementById("playerName");
+    const countdownDiv = document.getElementById("countdown");
+    const waitingDiv = document.getElementById("waitingMsg");
+    const roomInfoDiv = document.getElementById("roomInfo");
+    const playerListDiv = document.getElementById("playerList");
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    let gameInterval = null;
+    let keyBound = false;
+
+    function updatePlayerList(players) {
+      if (players && players.length > 0) {
+        playerListDiv.innerText = "目前房間玩家：" + players.join(", ");
+      } else {
+        playerListDiv.innerText = "目前房間沒有人";
+      }
+    }
+
+    function joinRoom() {
+      if (inGame) {
+        alert("⚠️ 遊戲進行中不能換房間！");
+        return;
+      }
+
+      const room = roomSelect.value;
+      const name = playerNameInput.value || "玩家";
+      if (ws) ws.close();
+
+      ws = new WebSocket(`ws://localhost:7000/ws?room=${room}&name=${encodeURIComponent(name)}`);
+
+      ws.onopen = () => {
+        console.log(`✅ ${name} 已進入房間 [${room}]`);
+        waitingDiv.innerText = "";
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "playerJoin") {
+          roomInfoDiv.innerText = `🎉 ${data.name} 加入房間，目前 ${data.count} 人`;
+          updatePlayerList(data.players);
+        }
+
+        if (data.type === "playerLeave") {
+          roomInfoDiv.innerText = `👋 ${data.name} 離開房間，目前 ${data.count} 人`;
+          updatePlayerList(data.players);
+        }
+
+        if (data.type === "waiting") {
+          waitingDiv.innerText = data.msg;
+        }
+
+        if (data.type === "startGame") {
+          waitingDiv.innerText = "";
+          let countdown = data.countdown;
+          countdownDiv.innerText = `遊戲 ${countdown} 秒後開始`;
+
+          let timer = setInterval(()=>{
+            countdown--;
+            countdownDiv.innerText = `遊戲 ${countdown} 秒後開始`;
+            if (countdown <= 0) {
+              clearInterval(timer);
+              countdownDiv.innerText = "";
+              startGame();
+            }
+          },1000);
+        }
+
+        if (data.type === "state") {
+          // ✅ 儲存對方的名稱和分數
+          if (data.id !== myId) {
+            players[data.id] = data; // data 現在包含 name
+          } else {
+            food = data.food;
+          }
+        }
+
+        if (data.type === "gameOver") {
+          alert(`🎉 玩家 ${data.id} 贏了！遊戲重置`);
+          resetSnake();
+          score = 0;
+          for (let pid in players) players[pid].score = 0;
+          inGame = false;
+          clearInterval(gameInterval);
+          gameInterval = null;
+        }
+      };
+
+      if (!keyBound) {
+        window.addEventListener("keydown", handleKey);
+        keyBound = true;
+      }
+    }
+
+    function readyGame() {
+      const mode = modeSelect.value;
+      ws.send(JSON.stringify({
+        type: "ready",
+        id: myId,
+        mode: mode,
+        ready: true
+      }));
+    }
+
+    function startGame() {
+      if (!gameInterval) {
+        console.log("✅ 遊戲開始！");
+        inGame = true;
+        gameInterval = setInterval(updateSnake, TICK_RATE);
+      }
+    }
+
+    function handleKey(e) {
+      if (!inGame) return; 
+      if (e.key === "ArrowUp" && myDir.y !== 1) myDir = {x:0,y:-1};
+      if (e.key === "ArrowDown" && myDir.y !== -1) myDir = {x:0,y:1};
+      if (e.key === "ArrowLeft" && myDir.x !== 1) myDir = {x:-1,y:0};
+      if (e.key === "ArrowRight" && myDir.x !== -1) myDir = {x:1,y:0};
+    }
+
+    function updateSnake() {
+      const head = {
+        x: mySnake[0].x + myDir.x,
+        y: mySnake[0].y + myDir.y
+      };
+
+      if (head.x < 0) head.x = canvas.width / GRID_SIZE - 1;
+      if (head.y < 0) head.y = canvas.height / GRID_SIZE - 1;
+      if (head.x >= canvas.width / GRID_SIZE) head.x = 0;
+      if (head.y >= canvas.height / GRID_SIZE) head.y = 0;
+
+      mySnake.unshift(head);
+
+      let ateFood = false;
+      for (let i=0; i<food.length; i++){
+        if (head.x === food[i].x && head.y === food[i].y) {
+          ateFood = true;
+          score++;
+          food[i] = {
+            x: Math.floor(Math.random() * (canvas.width/GRID_SIZE)),
+            y: Math.floor(Math.random() * (canvas.height/GRID_SIZE))
+          }
+        }
+      }
+      if (!ateFood) {
+        mySnake.pop();
+      }
+
+      for (let i = 1; i < mySnake.length; i++) {
+        if (head.x === mySnake[i].x && head.y === mySnake[i].y) {
+          console.log("💥 撞到自己，重生！");
+          resetSnake();
+          break;
+        }
+      }
+
+      for (let id in players) {
+        const enemy = players[id];
+        enemy.snake.forEach(s=>{
+          if (head.x === s.x && head.y === s.y) {
+            console.log(`💥 撞到玩家 ${id} 的蛇，重生！`);
+            resetSnake();
+          }
+        });
+      }
+
+      if (score >= WIN_SCORE) {
+        console.log(`🏆 你達到 ${WIN_SCORE} 分！遊戲結束`);
+        ws.send(JSON.stringify({
+          type: "gameOver",
+          id: myId
+        }));
+      }
+
+      // ✅ 送狀態時多帶 name
+      const myName = playerNameInput.value || "玩家";
+      ws.send(JSON.stringify({
+        type: "state",
+        id: myId,
+        name: myName,  // <-- 送出玩家名稱
+        snake: mySnake,
+        score: score,
+        food: food
+      }));
+
+      drawGame();
+    }
+
+    function resetSnake() {
+      mySnake = [{x: Math.floor(Math.random()*10), y: Math.floor(Math.random()*10)}];
+      score = 0;
+    }
+
+    function drawGame() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      ctx.fillStyle = "yellow";
+      food.forEach(f=>{
+        ctx.fillRect(f.x*GRID_SIZE,f.y*GRID_SIZE,GRID_SIZE,GRID_SIZE);
+      });
+
+      ctx.fillStyle = "lime";
+      mySnake.forEach(s=>{
+        ctx.fillRect(s.x*GRID_SIZE,s.y*GRID_SIZE,GRID_SIZE,GRID_SIZE);
+      });
+
+      ctx.fillStyle = "red";
+      for (let id in players) {
+        players[id].snake.forEach(s=>{
+          ctx.fillRect(s.x*GRID_SIZE,s.y*GRID_SIZE,GRID_SIZE,GRID_SIZE);
+        });
+      }
+
+      ctx.fillStyle = "white";
+      ctx.font = "16px Arial";
+      let yOffset = 20;
+
+      // ✅ 自己名稱顯示正確
+      const myName = playerNameInput.value || "玩家";
+      ctx.fillText(`你(${myName}) 分數: ${score}`, canvas.width - 200, yOffset);
+      yOffset += 20;
+
+      // ✅ 其他玩家顯示名稱而不是 ID
+      for (let id in players) {
+        const displayName = players[id].name || id;
+        ctx.fillText(`${displayName}: ${players[id].score} 分`, canvas.width - 200, yOffset);
+        yOffset += 20;
+      }
+    }
+  </script>
+</body>
+</html>
