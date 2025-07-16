@@ -12,6 +12,9 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// 廣播遊戲狀態的 channel
+var broadcast = make(chan BroadcastMsg)
+
 // 玩家資訊
 type PlayerInfo struct {
 	Name  string
